@@ -14,6 +14,9 @@ from satel_integra.utils import checksum, decode_bitmask_le, encode_bitmask_le
 
 _LOGGER = logging.getLogger(__name__)
 
+# LOG DI TEST: questo deve apparire all'import del modulo
+_LOGGER.info("messages.py LOCALE CARICATO - versione modificata con try/except per comandi custom")
+
 
 TCommand = TypeVar("TCommand", bound=SatelBaseCommand)
 
@@ -21,13 +24,14 @@ TCommand = TypeVar("TCommand", bound=SatelBaseCommand)
 class SatelBaseMessage[TCommand: SatelBaseCommand]:
     """Base class shared by read/write message types."""
 
-    def __init__(self, cmd: TCommand, msg_data: bytearray) -> None:
+    def __init__(self, cmd: TCommand | int, msg_data: bytearray) -> None:
         self.cmd = cmd
         self.msg_data = msg_data
 
     def __str__(self) -> str:
         """Format message string as (SatelMessage) CMD [CMD_HEX] -> DATA_HEX (DATA_LENGTH)"""
-        return f"({self.__class__.__name__}) {self.cmd} -> {self.msg_data.hex()} ({len(self.msg_data)})"
+        cmd_str = f"0x{self.cmd:02X}" if isinstance(self.cmd, int) else str(self.cmd)
+        return f"({self.__class__.__name__}) {cmd_str} -> {self.msg_data.hex()} ({len(self.msg_data)})"
 
 
 class SatelWriteMessage(SatelBaseMessage[SatelWriteCommand]):
@@ -35,7 +39,7 @@ class SatelWriteMessage(SatelBaseMessage[SatelWriteCommand]):
 
     def __init__(
         self,
-        cmd: SatelWriteCommand,
+        cmd: SatelWriteCommand | int,
         code: str | None = None,
         partitions: list[int] | None = None,
         zones_or_outputs: list[int] | None = None,
@@ -65,7 +69,7 @@ class SatelWriteMessage(SatelBaseMessage[SatelWriteCommand]):
         return bytearray(FRAME_START) + data + bytearray(FRAME_END)
 
 
-class SatelReadMessage(SatelBaseMessage[SatelReadCommand]):
+class SatelReadMessage(SatelBaseMessage[SatelReadCommand | int]):
     """Message representing data received from the panel."""
 
     @staticmethod
@@ -73,6 +77,8 @@ class SatelReadMessage(SatelBaseMessage[SatelReadCommand]):
         data: bytes,
     ) -> "SatelReadMessage":
         """Verify checksum and strip header/footer of received frame."""
+        _LOGGER.debug("decode_frame chiamata con data len=%d, primi 10 byte: %s", len(data), data[:10].hex())
+
         if data[0:2] != FRAME_START:
             _LOGGER.error("Bad header: %s", data.hex())
             raise ValueError("Invalid frame header")
@@ -88,18 +94,24 @@ class SatelReadMessage(SatelBaseMessage[SatelReadCommand]):
 
         if received_sum != calc_sum:
             msg = f"Checksum mismatch: got {received_sum}, expected {calc_sum}"
-            _LOGGER.error(
-                "Checksum mismatch: get %s, expected %s", received_sum, calc_sum
-            )
+            _LOGGER.error(msg)
             raise ValueError(msg)
 
-        cmd_byte, data = output[0], output[1:-2]
+        cmd_byte, msg_data = output[0], output[1:-2]
+
+        _LOGGER.debug("cmd_byte ricevuto: 0x%02X", cmd_byte)
+
+        cmd = None
         try:
             cmd = SatelReadCommand(cmd_byte)
-            return SatelReadMessage(cmd, bytearray(data))
-        except ValueError as ex:
-            _LOGGER.error("Unknown command byte: %s", hex(cmd_byte))
-            raise ValueError("Unknown command byte") from ex
+            _LOGGER.info("Comando riconosciuto: %s (0x%02X)", cmd, cmd_byte)
+        except ValueError as ve:
+            _LOGGER.info("Comando sconosciuto ricevuto: 0x%02X - ignorato per compatibilita' (payload raw: %s)", cmd_byte, msg_data.hex())
+            cmd = cmd_byte  # Usa il byte come intero
+
+        msg = SatelReadMessage(cmd, bytearray(msg_data))
+        _LOGGER.debug("Messaggio decodificato: %s", msg)
+        return msg
 
     def get_active_bits(self, expected_length: int) -> list[int]:
         """Convenience wrapper around decode_bitmask_le() for this message."""

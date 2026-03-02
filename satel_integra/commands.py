@@ -54,11 +54,15 @@ class SatelWriteCommand(SatelBaseCommand):
     OUTPUTS_ON = 0x88
     OUTPUTS_OFF = 0x89
     READ_DEVICE_NAME = 0xEE
+    READ_EVENT = 0x8C
+    READ_EVENT_TEXT = 0x8F
 
 
 # Write commands that echo themselves back instead of returning RESULT
 _ECHO_RESPONSE_COMMANDS = frozenset(
     {
         SatelWriteCommand.READ_DEVICE_NAME,
+        SatelWriteCommand.READ_EVENT,
+        SatelWriteCommand.READ_EVENT_TEXT,
     }
 )
